@@ -5,7 +5,7 @@
 .DESCRIPTION
     For each row in newhires.csv, creates an enabled user in the OU matching
     their department (Company\Users\<Department>), fills in title and
-    department, sets a temporary password that must be changed at first
+    department and email address, sets a temporary password that must be changed at first
     logon, and adds the user to the matching <Department>-Staff group.
 
     Group Policy (the S: drive map) and file share access then apply
@@ -35,6 +35,7 @@ foreach ($u in $users) {
         DisplayName           = "$($u.FirstName) $($u.LastName)"
         SamAccountName        = $u.Username
         UserPrincipalName     = "$($u.Username)@lab.local"
+        EmailAddress          = "$($u.Username)@lab.local"   # osTicket identifies users by email
         Title                 = $u.Title
         Department            = $u.Department
         Path                  = $ou
