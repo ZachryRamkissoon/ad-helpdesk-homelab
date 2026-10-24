@@ -684,6 +684,22 @@ I checked nothing broke: a new SSH session from CLIENT01 connected, and Jane sig
 
 ![UFW BLOCK entries: SRC 192.168.10.10, DPT 3306](images/107-f-block-log.png)
 
+## Clean-up: one IT Support queue
+
+Every help topic now routes to a single **IT Support** department, so no request lands in a queue nobody watches. osTicket ships with sample departments (Support, Sales, Maintenance), and the "Report a Problem" help topic, the user's "what's this about?" choice, had sent Jane's first ticket to Maintenance.
+
+- I renamed **Support** to **IT Support** rather than creating a new department, keeping its settings and its role as the default department.
+- All four help topics, including the high-priority "Report a Problem / Access Issue", now point to IT Support.
+- **Maintenance** and **Sales** are **Archived**, not deleted. They take no new tickets, but ticket #239263 and its audit trail stay on record.
+
+![All four help topics routed to IT Support](images/108-d-topics.png)
+
+![IT Support is the default; Maintenance and Sales archived](images/109-d-departments.png)
+
+A routing test from Jane under Report a Problem (ticket #864743) landed in **IT Support**.
+
+![Test ticket #864743: Department IT Support](images/110-d-test-ticket.png)
+
 ## Key concepts and next steps
 
 The biggest lesson from Part 1: AD depends on DNS, so most join and login problems start there.
@@ -711,7 +727,7 @@ The lab grows from on-prem Active Directory into a small, connected IT environme
 | 2 | Help desk tickets #1001–#1009 | Password resets, onboarding and offboarding, lockout policy, file shares, Group Policy, DNS, PowerShell | Done |
 | 3 | Admin account separation (#1010) | Named `adm-` admin accounts; built-in Administrator kept for emergencies | Done |
 | 4 | Linux server and osTicket | Ubuntu Server VM hosting osTicket; staff and employees sign in with AD accounts over LDAP/TLS; first ticket worked end to end | Done |
-| 4b | Hardening and clean-up | HTTPS for osTicket with a certificate from lab-DC01-CA (done); a host firewall (ufw) on HELPDESK01 (done); help topics routed to the Support department; CLIENT01's expired evaluation licence | In progress |
+| 4b | Hardening and clean-up | HTTPS for osTicket with a certificate from lab-DC01-CA (done); a host firewall (ufw) on HELPDESK01 (done); help topics routed to one IT Support department (done); CLIENT01's expired evaluation licence | In progress |
 | 5 | Remaining AD work, ticketed in osTicket | Delegation, DHCP, Group Policy troubleshooting, security filtering, AD Recycle Bin, second DC and replication, FSMO roles, backup and restore | Planned |
 | 6 | Hybrid identity with Microsoft Entra ID | Lab users synced to the cloud for on-prem and cloud sign-in | Planned |
 | 7 | AI help desk assistant | Agent triages osTicket tickets and proposes fixes; least-privilege delegated account, human approval, full logging | Planned |
