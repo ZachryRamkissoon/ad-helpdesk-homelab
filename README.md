@@ -17,7 +17,7 @@ The goal is hands-on practice with the work an IT support or junior sysadmin rol
 - Access control: OUs, security groups, AGDLP, NTFS and share permissions
 - PowerShell: bulk user creation from CSV, auditing and fixing account data
 - Security practice: least privilege, named admin accounts, UAC, lockout policy
-- Identity and PKI: LDAP over StartTLS, an Enterprise Root CA (AD CS), certificate trust on Linux, a read-only service account
+- Identity and PKI: LDAP over StartTLS, an Enterprise Root CA (AD CS), certificate trust on Linux, CSR-based web certificates and HTTPS, a read-only service account
 - Linux: Ubuntu Server administration over SSH, packages, services, permissions
 - Web stack: Apache, MariaDB and PHP (LAMP) hosting the osTicket help desk, built from source where needed
 - Help desk practice: ticket ownership, internal notes, data-owner approval, follow-up tasks, the full access lifecycle
@@ -36,7 +36,7 @@ flowchart LR
   end
   CLIENT01 -- "DNS, domain logon" --> DC01
   HD -- "DNS; LDAP over StartTLS (389)" --> DC01
-  CLIENT01 -- "SSH, web portal" --> HD
+  CLIENT01 -- "SSH, HTTPS portal" --> HD
   HD -. "NAT, outbound only" .-> NET(("Internet<br/>updates"))
 ```
 
@@ -53,7 +53,7 @@ Every DNS lookup and login from CLIENT01 goes to DC01, which is why the client c
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | DC01 | Windows Server 2025 Standard Evaluation (Desktop Experience) | Domain controller, DNS, Global Catalog, file server, certificate authority (AD CS) | 2 | 4 GB | 60 GB | 192.168.10.10 (static) | 127.0.0.1 |
 | CLIENT01 | Windows 11 Enterprise Evaluation | Domain-joined workstation | 2 | 4 GB | 64 GB | 192.168.10.20 (static) | 192.168.10.10 |
-| HELPDESK01 | Ubuntu Server 26.04 LTS | osTicket help desk (Apache, MariaDB, PHP 8.4) with AD sign-in over LDAP/TLS | 2 | 2 GB | 25 GB | 192.168.10.30 (static) | 192.168.10.10 |
+| HELPDESK01 | Ubuntu Server 26.04 LTS | osTicket help desk (Apache, MariaDB, PHP 8.4) with AD sign-in over LDAP/TLS, served over HTTPS | 2 | 2 GB | 25 GB | 192.168.10.30 (static) | 192.168.10.10 |
 
 **Directory structure**
 
@@ -603,6 +603,62 @@ The first real ticket went through the whole access lifecycle in 50 minutes: req
 
 All three VMs were then snapshotted as "Phase 4 complete - AD login + CA".
 
+## Hardening: HTTPS for the help desk
+
+The help desk now runs at `https://helpdesk01.lab.local`, with a certificate from the lab's own CA, and plain HTTP redirects to it. Staff and employees type passwords into osTicket, so they shouldn't cross the network in readable form. CLIENT01 shows a padlock with no warning, because domain members trust lab-DC01-CA automatically.
+
+HELPDESK01 isn't domain-joined, so it can't auto-enroll like DC01. I used the manual route that works for any server:
+
+1. **HELPDESK01 makes a private key and a certificate signing request (CSR).** The key never leaves the server; the CSR carries the matching public key and the name `helpdesk01.lab.local`. I added a Subject Alternative Name, because browsers check only the SAN and ignore the Common Name. `-nodes` leaves the key without a passphrase so Apache can start unattended, which makes the file's permissions the protection.
+2. **The CA signs it.** On DC01, `certreq -submit` with the **Web Server** template issued certificate #3. Only Domain and Enterprise Admins may enroll for that template, since a web certificate can claim any server name. Windows Server's built-in `scp` moved the files both ways.
+3. **HELPDESK01 checks and installs it.** `openssl verify` returned OK against the trusted CA list, and the certificate's and key's modulus fingerprints matched. The certificate went to `/etc/ssl/certs` (mode 644, public by design) and the key to `/etc/ssl/private` (mode 600, root only). Apache reads the key as root at start-up, then serves traffic as `www-data`. The working copies were shredded.
+
+My first `openssl` command named the same file for both the key and the CSR, so the request overwrote the key. I shredded the file and started again; a fresh key costs nothing.
+
+![CSR checked: CN and SAN both helpdesk01.lab.local](images/96-h-csr.png)
+
+![certreq issues the certificate; scp moves it back](images/97-h-certreq.png)
+
+![Issuer lab-DC01-CA, verify OK, matching key fingerprints](images/98-h-verify.png)
+
+![Certificate and key installed with tight permissions](images/99-h-install.png)
+
+Apache's site became two virtual hosts. Port 80 only redirects (301, permanent), including visitors who type the IP address. Port 443 serves osTicket with the certificate. The IP alias stays off the HTTPS site, because the certificate covers only the name.
+
+```apache
+<VirtualHost *:80>
+    ServerName helpdesk01.lab.local
+    ServerAlias 192.168.10.30
+    Redirect permanent / https://helpdesk01.lab.local/
+</VirtualHost>
+
+<VirtualHost *:443>
+    ServerName helpdesk01.lab.local
+    DocumentRoot /var/www/osticket
+    SSLEngine on
+    SSLCertificateFile    /etc/ssl/certs/helpdesk01.lab.local.crt
+    SSLCertificateKeyFile /etc/ssl/private/helpdesk01.lab.local.key
+    <Directory /var/www/osticket>
+        AllowOverride All
+        Require all granted
+    </Directory>
+</VirtualHost>
+```
+
+I backed up the old config, enabled `mod_ssl`, and ran `apache2ctl configtest` (Syntax OK) before a full restart. `ss` then showed Apache listening on 80 and 443. `ufw` reported inactive, so HELPDESK01 has no host firewall yet; that's on the hardening list.
+
+![configtest OK; Apache on ports 80 and 443; ufw inactive](images/100-h-apache.png)
+
+In osTicket, I set the **Helpdesk URL** to `https://helpdesk01.lab.local/`, which it uses to build links, and ticked **Force HTTPS**. That's defence in depth: osTicket refuses plain HTTP even if the Apache redirect were ever lost.
+
+![Helpdesk URL on https with Force HTTPS on](images/101-h-osticket-url.png)
+
+![Edge's certificate viewer: issued to helpdesk01.lab.local by lab-DC01-CA](images/102-h-cert-viewer.png)
+
+Jane's domain login works the same over HTTPS.
+
+![Jane signed in on the HTTPS portal](images/103-h-jane-https.png)
+
 ## Key concepts and next steps
 
 The biggest lesson from Part 1: AD depends on DNS, so most join and login problems start there.
@@ -630,7 +686,7 @@ The lab grows from on-prem Active Directory into a small, connected IT environme
 | 2 | Help desk tickets #1001–#1009 | Password resets, onboarding and offboarding, lockout policy, file shares, Group Policy, DNS, PowerShell | Done |
 | 3 | Admin account separation (#1010) | Named `adm-` admin accounts; built-in Administrator kept for emergencies | Done |
 | 4 | Linux server and osTicket | Ubuntu Server VM hosting osTicket; staff and employees sign in with AD accounts over LDAP/TLS; first ticket worked end to end | Done |
-| 4b | Hardening and clean-up | HTTPS for osTicket with a certificate from lab-DC01-CA; an IT Support department replacing the sample ones; CLIENT01's expired evaluation licence | Planned |
+| 4b | Hardening and clean-up | HTTPS for osTicket with a certificate from lab-DC01-CA (done); help topics routed to the Support department; a host firewall (ufw) on HELPDESK01; CLIENT01's expired evaluation licence | In progress |
 | 5 | Remaining AD work, ticketed in osTicket | Delegation, DHCP, Group Policy troubleshooting, security filtering, AD Recycle Bin, second DC and replication, FSMO roles, backup and restore | Planned |
 | 6 | Hybrid identity with Microsoft Entra ID | Lab users synced to the cloud for on-prem and cloud sign-in | Planned |
 | 7 | AI help desk assistant | Agent triages osTicket tickets and proposes fixes; least-privilege delegated account, human approval, full logging | Planned |
