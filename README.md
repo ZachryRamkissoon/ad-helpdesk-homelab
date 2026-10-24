@@ -18,7 +18,7 @@ The goal is hands-on practice with the work an IT support or junior sysadmin rol
 - PowerShell: bulk user creation from CSV, auditing and fixing account data
 - Security practice: least privilege, named admin accounts, UAC, lockout policy
 - Identity and PKI: LDAP over StartTLS, an Enterprise Root CA (AD CS), certificate trust on Linux, CSR-based web certificates and HTTPS, a read-only service account
-- Linux: Ubuntu Server administration over SSH, packages, services, permissions
+- Linux: Ubuntu Server administration over SSH, packages, services, permissions, host firewall (ufw)
 - Web stack: Apache, MariaDB and PHP (LAMP) hosting the osTicket help desk, built from source where needed
 - Help desk practice: ticket ownership, internal notes, data-owner approval, follow-up tasks, the full access lifecycle
 - Troubleshooting: documented problems, causes and fixes throughout
@@ -659,6 +659,31 @@ Jane's domain login works the same over HTTPS.
 
 ![Jane signed in on the HTTPS portal](images/103-h-jane-https.png)
 
+## Hardening: host firewall on HELPDESK01
+
+HELPDESK01 now accepts only SSH and web traffic, and only from the lab network; everything else coming in is dropped. Before this it answered on any port it had open, so a service exposed by mistake would have been reachable at once.
+
+| Port | Service | Allowed from |
+| --- | --- | --- |
+| 22/tcp | SSH, for administration | 192.168.10.0/24 (labnet) |
+| 80/tcp | HTTP, redirect to HTTPS only | 192.168.10.0/24 |
+| 443/tcp | HTTPS, the help desk | 192.168.10.0/24 |
+| Everything else |  | Dropped |
+
+I used Ubuntu's `ufw` with default deny incoming and allow outgoing. Limiting each rule to `192.168.10.0/24` keeps the help desk off the NAT adapter, which exists only for outbound updates. The firewall is stateful, so replies to HELPDESK01's own DNS and LDAP lookups to DC01 come back in without extra rules.
+
+Order matters over SSH. I added the allow rules and checked them with `ufw show added` before running `ufw enable`, so the session I was typing in couldn't cut itself off. The VirtualBox console was the fallback if it had.
+
+![Defaults set, two scoped allow rules added and reviewed](images/104-f-rules.png)
+
+![ufw active: deny incoming, two commented rules from labnet](images/105-f-status.png)
+
+I checked nothing broke: a new SSH session from CLIENT01 connected, and Jane signed in to the HTTPS portal, which also proves LDAP to DC01 still works. Then I checked the blocking itself. From DC01, `Test-NetConnection` to MariaDB's port 3306 failed, and HELPDESK01's kernel log recorded each attempt as `UFW BLOCK` from 192.168.10.10 to port 3306. Ping still answers, which is ufw's default and useful for troubleshooting.
+
+![DC01: TCP 3306 to helpdesk01 fails; ping succeeds](images/106-f-port-test.png)
+
+![UFW BLOCK entries: SRC 192.168.10.10, DPT 3306](images/107-f-block-log.png)
+
 ## Key concepts and next steps
 
 The biggest lesson from Part 1: AD depends on DNS, so most join and login problems start there.
@@ -686,7 +711,7 @@ The lab grows from on-prem Active Directory into a small, connected IT environme
 | 2 | Help desk tickets #1001–#1009 | Password resets, onboarding and offboarding, lockout policy, file shares, Group Policy, DNS, PowerShell | Done |
 | 3 | Admin account separation (#1010) | Named `adm-` admin accounts; built-in Administrator kept for emergencies | Done |
 | 4 | Linux server and osTicket | Ubuntu Server VM hosting osTicket; staff and employees sign in with AD accounts over LDAP/TLS; first ticket worked end to end | Done |
-| 4b | Hardening and clean-up | HTTPS for osTicket with a certificate from lab-DC01-CA (done); help topics routed to the Support department; a host firewall (ufw) on HELPDESK01; CLIENT01's expired evaluation licence | In progress |
+| 4b | Hardening and clean-up | HTTPS for osTicket with a certificate from lab-DC01-CA (done); a host firewall (ufw) on HELPDESK01 (done); help topics routed to the Support department; CLIENT01's expired evaluation licence | In progress |
 | 5 | Remaining AD work, ticketed in osTicket | Delegation, DHCP, Group Policy troubleshooting, security filtering, AD Recycle Bin, second DC and replication, FSMO roles, backup and restore | Planned |
 | 6 | Hybrid identity with Microsoft Entra ID | Lab users synced to the cloud for on-prem and cloud sign-in | Planned |
 | 7 | AI help desk assistant | Agent triages osTicket tickets and proposes fixes; least-privilege delegated account, human approval, full logging | Planned |
